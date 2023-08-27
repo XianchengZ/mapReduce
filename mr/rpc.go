@@ -28,6 +28,7 @@ type ExampleReply struct {
 type TaskArgs struct {
 	WorkerID int
 	TaskID   int
+	TaskType TaskType
 }
 
 type TaskReply struct {
@@ -35,6 +36,7 @@ type TaskReply struct {
 	TaskID   int
 	FileName string
 	NReduce  int
+	NMap     int
 	Success  bool
 }
 

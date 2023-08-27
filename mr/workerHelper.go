@@ -36,6 +36,24 @@ func readFromFile(fileName string) []byte {
 	return contents
 }
 
+func decodeJSONFromFile(fileName string) []KeyValue {
+	fileDescriptor, error := os.Open(fileName)
+	if error != nil {
+		log.Fatalf("Cannot read %v\n", fileName)
+	}
+	decoder := json.NewDecoder(fileDescriptor)
+	var res []KeyValue
+	for {
+		var currentKVP KeyValue
+		if decoder.Decode(&currentKVP) != nil {
+			break
+		}
+		res = append(res, currentKVP)
+	}
+	fileDescriptor.Close()
+	return res
+}
+
 func partition(intermediateKVP []KeyValue, nReduce int) [][]KeyValue {
 	partitionedKVP := make([][]KeyValue, nReduce)
 

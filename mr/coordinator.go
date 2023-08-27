@@ -15,6 +15,7 @@ type Coordinator struct {
 	ReduceTasks []Task
 
 	NReduce int // nReduce is the number of reduce tasks to use.
+	NMap    int
 	workers []worker
 
 	finished bool
@@ -33,17 +34,21 @@ func (c *Coordinator) RegisterWorker(args *WorkerArgs, reply *WorkerReply) error
 }
 
 // assign map task to a worker (helper function)
-func (c *Coordinator) assignMapTask(workerID int, task *Task, reply *TaskReply) {
+func (c *Coordinator) assignTask(workerID int, task *Task, reply *TaskReply, taskType TaskType) {
 	// take the ID from args, mark the task is doing by one worker
 	c.workers[workerID].State = IN_PROGRESS
 	task.State = IN_PROGRESS
 	task.workerID = workerID
 
-	reply.TaskType = MapTask
+	reply.TaskType = taskType
 	reply.TaskID = task.ID
-	reply.FileName = task.FileName
 	reply.NReduce = c.NReduce
 
+	if taskType == MapTask {
+		reply.FileName = task.FileName
+	} else {
+		reply.NMap = c.NMap
+	}
 	// TODO: set timer out for the task
 }
 
@@ -52,19 +57,22 @@ func (c *Coordinator) RequestTask(args *TaskArgs, reply *TaskReply) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
+	workerID := args.WorkerID
 	for i := 0; i < len(c.MapTasks); i++ {
 		task := &c.MapTasks[i]
 		if task.State == IDLE {
-			// need to process
-			workerID := args.WorkerID
-			c.assignMapTask(workerID, task, reply)
+			c.assignTask(workerID, task, reply, MapTask)
 			return nil
 		}
 	}
 
-	// for _, task := range c.ReduceTasks {
-
-	// }
+	for i := 0; i < len(c.ReduceTasks); i++ {
+		task := &c.ReduceTasks[i]
+		if task.State == IDLE {
+			c.assignTask(workerID, task, reply, ReduceTask)
+			return nil
+		}
+	}
 
 	// arrive here, we should terminate the worker
 	reply.TaskType = ExitTask
@@ -78,8 +86,13 @@ func (c *Coordinator) CompleteTask(args *TaskArgs, reply *TaskReply) error {
 
 	taskID := args.TaskID
 	workerID := args.WorkerID
+	taskType := args.TaskType
 
-	c.MapTasks[taskID].State = COMPLETE
+	if taskType == MapTask {
+		c.MapTasks[taskID].State = COMPLETE
+	} else {
+		c.ReduceTasks[taskID].State = COMPLETE
+	}
 	c.workers[workerID].State = IDLE
 	reply.Success = true
 	return nil
@@ -110,7 +123,17 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	return c.finished
+	for i := 0; i < c.NMap; i++ {
+		if c.MapTasks[i].State != COMPLETE {
+			return false
+		}
+	}
+	for i := 0; i < c.NReduce; i++ {
+		if c.ReduceTasks[i].State != COMPLETE {
+			return false
+		}
+	}
+	return true
 }
 
 // initialize coordinator data structure
@@ -118,6 +141,7 @@ func (c *Coordinator) init(nMapTask, nReduceTask int) {
 	c.MapTasks = make([]Task, nMapTask)
 	c.ReduceTasks = make([]Task, nReduceTask)
 	c.NReduce = nReduceTask
+	c.NMap = nMapTask
 	c.finished = false
 }
 

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"sort"
 )
 
 type worker struct {
@@ -43,17 +44,14 @@ func Worker(mapf func(string, string) []KeyValue,
 		// then read that file and call the application Map function
 		if reply.TaskType == MapTask {
 			worker.doMapTask(mapf, reply.FileName, reply.NReduce, reply.TaskID)
-			// call map task
 
 		} else if reply.TaskType == ReduceTask {
-			// call reduce task
+			worker.doReduceTask(reducef, reply.NMap, reply.TaskID)
 		} else {
 			log.Printf("Worker %d terminated by coordinator\n", worker.ID)
 			os.Exit(0)
 		}
 	}
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
 }
 
 func (worker *worker) doMapTask(
@@ -80,12 +78,81 @@ func (worker *worker) doMapTask(
 	taskArgs := TaskArgs{}
 	taskArgs.WorkerID = worker.ID
 	taskArgs.TaskID = taskID
+	taskArgs.TaskType = MapTask
 
 	taskReply := TaskReply{}
 
 	call("Coordinator.CompleteTask", &taskArgs, &taskReply)
 	if !taskReply.Success {
-		log.Fatalf("Something wrong with updating task %d in coordinator\n", taskID)
+		log.Fatalf("Something wrong with updating %v task %d in coordinator\n", MapTask, taskID)
+	}
+}
+
+func (worker *worker) doReduceTask(
+	reducef func(string, []string) string,
+	nMap int,
+	reducePartitionNumber int,
+) {
+	// iterate through all task ID by range of nmap, add intermediate kvp together
+	//	that belongs to the same reduce tasks
+	var kvpArray []KeyValue
+
+	for i := 0; i < nMap; i++ {
+		// read intermediate file contents, merge together in RAM
+		currentFileName := fmt.Sprintf("mr-%v-%v", i, reducePartitionNumber)
+		currentKVPArray := decodeJSONFromFile(currentFileName)
+		kvpArray = append(kvpArray, currentKVPArray...)
+	}
+
+	// sort kvpArray to group same intermediate keys together
+	sort.SliceStable(kvpArray, func(i, j int) bool {
+		return kvpArray[i].Key < kvpArray[j].Key
+	})
+
+	// create output file
+	outputFileName := fmt.Sprintf("mr-out-%d", reducePartitionNumber)
+	outputFile, err := os.Create(outputFileName + ".tmp")
+	if err != nil {
+		log.Fatalf("Could not create file %v\n", outputFileName+".tmp")
+	}
+	// loop through kvp, for append values of the same intermediate key together
+	// pass to user defined reduce function
+	i := 0
+	for i < len(kvpArray) {
+		var currentValues []string
+		currentKey := kvpArray[i].Key
+		currentValues = append(currentValues, kvpArray[i].Value)
+
+		j := i + 1
+		for j < len(kvpArray) && kvpArray[j].Key == currentKey {
+			currentValues = append(currentValues, kvpArray[j].Value)
+			j++
+		}
+
+		// given the key and list of values, pass to user defined reduce func
+		output := reducef(currentKey, currentValues)
+		fmt.Fprintf(outputFile, "%v %v\n", currentKey, output)
+
+		// ready for next loop
+		if j == len(kvpArray) {
+			break
+		}
+		i = j
+	}
+	outputFile.Close()
+	os.Rename(outputFileName+".tmp", outputFileName)
+
+	// update that the reduce task is done
+	taskArgs := TaskArgs{}
+	taskArgs.WorkerID = worker.ID
+	taskArgs.TaskID = reducePartitionNumber
+	taskArgs.TaskType = ReduceTask
+
+	taskReply := TaskReply{}
+
+	call("Coordinator.CompleteTask", &taskArgs, &taskReply)
+	if !taskReply.Success {
+		log.Fatalf("Something wrong with updating %v task %d in coordinator\n", ReduceTask, reducePartitionNumber)
 	}
 }
 
