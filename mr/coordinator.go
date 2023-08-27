@@ -7,6 +7,7 @@ import (
 	"net/rpc"
 	"os"
 	"sync"
+	"time"
 )
 
 type Coordinator struct {
@@ -41,6 +42,19 @@ func (c *Coordinator) assignTask(workerID int, task *Task, reply *TaskReply, tas
 	c.workers[workerID].State = IN_PROGRESS
 	task.State = IN_PROGRESS
 	task.workerID = workerID
+
+	task.timer = time.AfterFunc(10*time.Second, func(taskID int, taskType TaskType) func() {
+		return func() {
+			c.lock.Lock()
+			defer c.lock.Unlock()
+
+			if taskType == MapTask && c.MapTasks[taskID].State == IN_PROGRESS {
+				c.MapTasks[taskID].State = IDLE
+			} else if taskType == ReduceTask && c.ReduceTasks[taskID].State == IN_PROGRESS {
+				c.ReduceTasks[taskID].State = IDLE
+			}
+		}
+	}(task.ID, taskType))
 
 	reply.TaskType = taskType
 	reply.TaskID = task.ID
@@ -108,8 +122,10 @@ func (c *Coordinator) CompleteTask(args *TaskArgs, reply *TaskReply) error {
 
 	if taskType == MapTask {
 		c.MapTasks[taskID].State = COMPLETE
+		c.MapTasks[taskID].timer.Stop()
 	} else {
 		c.ReduceTasks[taskID].State = COMPLETE
+		c.ReduceTasks[taskID].timer.Stop()
 	}
 	c.workers[workerID].State = IDLE
 	reply.Success = true
