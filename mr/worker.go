@@ -43,11 +43,13 @@ func Worker(mapf func(string, string) []KeyValue,
 
 		// then read that file and call the application Map function
 		if reply.TaskType == MapTask {
+			log.Printf("Worker %d start map task %d, file: %v\n", worker.ID, reply.TaskID, reply.FileName)
 			worker.doMapTask(mapf, reply.FileName, reply.NReduce, reply.TaskID)
 
 		} else if reply.TaskType == ReduceTask {
+			log.Printf("Worker %d start reduce task %d\n", worker.ID, reply.TaskID)
 			worker.doReduceTask(reducef, reply.NMap, reply.TaskID)
-		} else {
+		} else if reply.TaskType == ExitTask {
 			log.Printf("Worker %d terminated by coordinator\n", worker.ID)
 			os.Exit(0)
 		}
@@ -60,7 +62,7 @@ func (worker *worker) doMapTask(
 	nReduce int,
 	taskID int,
 ) {
-	log.Printf("map task performed by worker: %d, file name: %v\n", worker.ID, fileName)
+	log.Printf("	map task performed by worker: %d, file name: %v\n", worker.ID, fileName)
 
 	// read from the file
 	contents := readFromFile(fileName)
@@ -153,6 +155,8 @@ func (worker *worker) doReduceTask(
 	call("Coordinator.CompleteTask", &taskArgs, &taskReply)
 	if !taskReply.Success {
 		log.Fatalf("Something wrong with updating %v task %d in coordinator\n", ReduceTask, reducePartitionNumber)
+	} else {
+		log.Printf("	Reduce Task performed by worker: %d\n", worker.ID)
 	}
 }
 

@@ -1,5 +1,7 @@
 package mr
 
+import "time"
+
 // enum of different task type
 type TaskType int
 
@@ -7,6 +9,7 @@ const (
 	MapTask TaskType = iota
 	ReduceTask
 	ExitTask
+	NoTask
 )
 
 type State int
@@ -24,4 +27,5 @@ type Task struct {
 	FileName string
 	State    State
 	Type     TaskType
+	timer    *time.Timer
 }

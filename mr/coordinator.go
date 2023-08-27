@@ -24,6 +24,8 @@ type Coordinator struct {
 
 // RPC call
 func (c *Coordinator) RegisterWorker(args *WorkerArgs, reply *WorkerReply) error {
+	c.lock.Lock()
+	defer c.lock.Unlock()
 	workerID := len(c.workers)
 	reply.WorkerID = workerID
 
@@ -58,20 +60,36 @@ func (c *Coordinator) RequestTask(args *TaskArgs, reply *TaskReply) error {
 	defer c.lock.Unlock()
 
 	workerID := args.WorkerID
+	completedMapTasks := 0
 	for i := 0; i < len(c.MapTasks); i++ {
 		task := &c.MapTasks[i]
 		if task.State == IDLE {
 			c.assignTask(workerID, task, reply, MapTask)
 			return nil
+		} else if task.State == COMPLETE {
+			completedMapTasks++
 		}
 	}
 
+	if completedMapTasks != c.NMap { // we want to wait till all map task finishes
+		reply.TaskType = NoTask
+		return nil
+	}
+
+	completedReduceTask := 0
 	for i := 0; i < len(c.ReduceTasks); i++ {
 		task := &c.ReduceTasks[i]
 		if task.State == IDLE {
 			c.assignTask(workerID, task, reply, ReduceTask)
 			return nil
+		} else if task.State == COMPLETE {
+			completedReduceTask++
 		}
+	}
+
+	if completedReduceTask != c.NReduce { // we want to wait till all reduce task finishes
+		reply.TaskType = NoTask
+		return nil
 	}
 
 	// arrive here, we should terminate the worker
@@ -123,6 +141,8 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
+	c.lock.Lock()
+	defer c.lock.Unlock()
 	for i := 0; i < c.NMap; i++ {
 		if c.MapTasks[i].State != COMPLETE {
 			return false
